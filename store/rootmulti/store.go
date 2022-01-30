@@ -45,15 +45,17 @@ const (
 // cacheMultiStore which is used for branching other MultiStores. It implements
 // the CommitMultiStore interface.
 type Store struct {
-	db             dbm.DB
-	lastCommitInfo *types.CommitInfo
-	pruningOpts    types.PruningOptions
-	storesParams   map[types.StoreKey]storeParams
-	stores         map[types.StoreKey]types.CommitKVStore
-	keysByName     map[string]types.StoreKey
-	lazyLoading    bool
-	pruneHeights   []int64
-	initialVersion int64
+	db               dbm.DB
+	lastCommitInfo   *types.CommitInfo
+	pruningOpts      types.PruningOptions
+	storesParams     map[types.StoreKey]storeParams
+	stores           map[types.StoreKey]types.CommitKVStore
+	keysByName       map[string]types.StoreKey
+	lazyLoading      bool
+	pruneHeights     []int64
+	cleanHouseHeight int64 // CVCH: -1 Unstarted; 0 Finished; +# Current Height we are pruning down from
+	cleanHouseAmount int64 // CVCH: Positive Integer of blocks to prune @ Each pruning-interval
+	initialVersion   int64
 
 	traceWriter  io.Writer
 	traceContext types.TraceContext
@@ -74,13 +76,15 @@ var (
 // LoadVersion must be called.
 func NewStore(db dbm.DB) *Store {
 	return &Store{
-		db:           db,
-		pruningOpts:  types.PruneNothing,
-		storesParams: make(map[types.StoreKey]storeParams),
-		stores:       make(map[types.StoreKey]types.CommitKVStore),
-		keysByName:   make(map[string]types.StoreKey),
-		pruneHeights: make([]int64, 0),
-		listeners:    make(map[types.StoreKey][]types.WriteListener),
+		db:               db,
+		pruningOpts:      types.PruneNothing,
+		storesParams:     make(map[types.StoreKey]storeParams),
+		stores:           make(map[types.StoreKey]types.CommitKVStore),
+		keysByName:       make(map[string]types.StoreKey),
+		pruneHeights:     make([]int64, 0),
+		listeners:        make(map[types.StoreKey][]types.WriteListener),
+		cleanHouseHeight: -1, // CVCH
+		cleanHouseAmount: 10, // CVCH
 	}
 }
 
@@ -359,6 +363,41 @@ func (rs *Store) LastCommitID() types.CommitID {
 	return rs.lastCommitInfo.CommitID()
 }
 
+// CVCH: Chill Validation - Clean House (Prune old "KeepEvery" blocks which take up disk space over time)
+func (rs *Store) addCleanHouseHeights(previousHeight int64) {
+	//       Start from current height, then move towards 0 since more recent blocks are more likely to be present)
+	//       Remove all previous blocks older than KeepRecent
+	//       NOTE: TURN OFF SNAPSHOTS
+	//	 TODO: Preseve heights qualified by: snapshot-interval = 0; snapshot-keep-recent = 2
+	//	       Difficult Because: Unable to see SnapshotInterval, SnapshotKeepRecent from this scope
+	cleanHouseEnabled := true
+	if cleanHouseEnabled {
+		// Clean House hasn't been set up yet
+		if rs.cleanHouseHeight == -1 {
+			rs.cleanHouseHeight = previousHeight - int64(rs.pruningOpts.KeepRecent)
+			fmt.Printf("**CVCH Init cleanHouseHeight = %d\n", rs.cleanHouseHeight)
+		}
+		// Clean House is finished
+		if rs.cleanHouseHeight == 0 {
+			fmt.Printf("**CVCH Finished\n")
+		} else {
+			fmt.Printf("**PH CVCH Starting: cleanHouseHeight %d\n", rs.cleanHouseHeight)
+			// Determine starting and ending heights to clean
+			var cleanOffset int64
+			for cleanOffset = 0; cleanOffset < rs.cleanHouseAmount; cleanOffset++ {
+				fmt.Printf("**PH CVCH Add %d\n", rs.cleanHouseHeight)
+				rs.pruneHeights = append(rs.pruneHeights, rs.cleanHouseHeight)
+
+				rs.cleanHouseHeight-- // Reduce cleanHouseHeight for next time through the loop
+				if rs.cleanHouseHeight < 1 {
+					break // do not remove heights below 1
+				}
+			}
+			fmt.Printf("**PH CVCH Resulting: cleanHouseHeight %d\n", rs.cleanHouseHeight)
+		}
+	}
+}
+
 // Commit implements Committer/CommitStore.
 func (rs *Store) Commit() types.CommitID {
 	var previousHeight, version int64
@@ -389,12 +428,15 @@ func (rs *Store) Commit() types.CommitID {
 		// - KeepEvery % (height - KeepRecent) != 0 as that means the height is not
 		// a 'snapshot' height.
 		if rs.pruningOpts.KeepEvery == 0 || pruneHeight%int64(rs.pruningOpts.KeepEvery) != 0 {
+			fmt.Printf("**PH Add %d\n", pruneHeight)
 			rs.pruneHeights = append(rs.pruneHeights, pruneHeight)
 		}
+
 	}
 
 	// batch prune if the current height is a pruning interval height
 	if rs.pruningOpts.Interval > 0 && version%int64(rs.pruningOpts.Interval) == 0 {
+		rs.addCleanHouseHeights(previousHeight) // CVCH: Add additional block heights for clean house pruning
 		rs.pruneStores()
 	}
 
@@ -419,6 +461,7 @@ func (rs *Store) pruneStores() {
 			// it to get the underlying IAVL store.
 			store = rs.GetCommitKVStore(key)
 
+			fmt.Printf("**PH DV %s => %v\n", key, rs.pruneHeights)
 			if err := store.(*iavl.Store).DeleteVersions(rs.pruneHeights...); err != nil {
 				if errCause := errors.Cause(err); errCause != nil && errCause != iavltree.ErrVersionDoesNotExist {
 					panic(err)
