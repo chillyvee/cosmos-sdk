@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	iavltree "github.com/cosmos/iavl"
 	protoio "github.com/gogo/protobuf/io"
@@ -92,7 +93,7 @@ func NewStore(db dbm.DB) *Store {
 		removalMap:    make(map[types.StoreKey]bool),
 
 		cleanHouseHeight: -1, // CVCH
-		cleanHouseAmount: 10, // CVCH
+		cleanHouseAmount: 3,  // CVCH
 	}
 }
 
@@ -400,38 +401,40 @@ func (rs *Store) LastCommitID() types.CommitID {
 }
 
 // CVCH: Chill Validation - Clean House (Prune old "KeepEvery" blocks which take up disk space over time)
-func (rs *Store) addCleanHouseHeights(previousHeight int64) {
+func (rs *Store) addCleanHouseHeights() int64 {
 	//       Start from current height, then move towards 0 since more recent blocks are more likely to be present)
 	//       Remove all previous blocks older than KeepRecent
 	//       NOTE: TURN OFF SNAPSHOTS
 	//	 TODO: Preseve heights qualified by: snapshot-interval = 0; snapshot-keep-recent = 2
 	//	       Difficult Because: Unable to see SnapshotInterval, SnapshotKeepRecent from this scope
-	cleanHouseEnabled := true
-	if cleanHouseEnabled {
-		// Clean House hasn't been set up yet
-		if rs.cleanHouseHeight == -1 {
-			rs.cleanHouseHeight = previousHeight - int64(rs.pruningOpts.KeepRecent)
-			fmt.Printf("**CVCH Init cleanHouseHeight = %d\n", rs.cleanHouseHeight)
-		}
-		// Clean House is finished
-		if rs.cleanHouseHeight == 0 {
-			fmt.Printf("**CVCH Finished\n")
-		} else {
-			fmt.Printf("**PH CVCH Starting: cleanHouseHeight %d\n", rs.cleanHouseHeight)
-			// Determine starting and ending heights to clean
-			var cleanOffset int64
-			for cleanOffset = 0; cleanOffset < rs.cleanHouseAmount; cleanOffset++ {
-				fmt.Printf("**PH CVCH Add %d\n", rs.cleanHouseHeight)
-				rs.pruneHeights = append(rs.pruneHeights, rs.cleanHouseHeight)
+	cleanHouseEnabled := true // TODO: Configure via toml
+	if !cleanHouseEnabled {
+		return 0 // no heights added
+	}
 
-				rs.cleanHouseHeight-- // Reduce cleanHouseHeight for next time through the loop
-				if rs.cleanHouseHeight < 1 {
-					break // do not remove heights below 1
-				}
-			}
-			fmt.Printf("**PH CVCH Resulting: cleanHouseHeight %d\n", rs.cleanHouseHeight)
+	// Clean House is finished
+	if rs.cleanHouseHeight == 0 {
+		fmt.Printf("**CVCH Finished\n")
+		return 0
+	}
+
+	fmt.Printf("**PH CVCH Starting: cleanHouseHeight %d\n", rs.cleanHouseHeight)
+	// Determine starting and ending heights to clean
+	var cleanOffset int64
+	var pruneAmount int64
+	pruneAmount = 0
+	for cleanOffset = 0; cleanOffset < rs.cleanHouseAmount; cleanOffset++ {
+		fmt.Printf("**PH CVCH Add %d\n", rs.cleanHouseHeight)
+		rs.pruneHeights = append(rs.pruneHeights, rs.cleanHouseHeight)
+		pruneAmount++
+
+		rs.cleanHouseHeight-- // Reduce cleanHouseHeight for next time through the loop
+		if rs.cleanHouseHeight < 1 {
+			break // do not remove heights below 1
 		}
 	}
+	fmt.Printf("**PH CVCH Resulting: cleanHouseHeight %d\n", rs.cleanHouseHeight)
+	return pruneAmount
 }
 
 // Commit implements Committer/CommitStore.
@@ -481,9 +484,14 @@ func (rs *Store) Commit() types.CommitID {
 
 	}
 
+	// CVCH: Set up initial cleanHouseHeight if necessary
+	if rs.cleanHouseHeight == -1 {
+		rs.cleanHouseHeight = previousHeight - int64(rs.pruningOpts.KeepRecent)
+		fmt.Printf("**CVCH Init cleanHouseHeight = %d\n", rs.cleanHouseHeight)
+	}
+
 	// batch prune if the current height is a pruning interval height
 	if rs.pruningOpts.Interval > 0 && version%int64(rs.pruningOpts.Interval) == 0 {
-		rs.addCleanHouseHeights(previousHeight) // CVCH: Add additional block heights for clean house pruning
 		rs.pruneStores()
 	}
 
@@ -502,18 +510,46 @@ func (rs *Store) pruneStores() {
 		return
 	}
 
-	for key, store := range rs.stores {
-		if store.GetStoreType() == types.StoreTypeIAVL {
-			// If the store is wrapped with an inter-block cache, we must first unwrap
-			// it to get the underlying IAVL store.
-			store = rs.GetCommitKVStore(key)
+	// CVCH: For cleaning house set a configurable(TOD0) deadline
+	cleanDuration, err := time.ParseDuration("2000ms") /*TODO: config */
+	cleanDeadline := time.Now()                        // Default: If bad deadline, set deadline to now to disable additional pruning
+	if err == nil {
+		cleanDeadline = time.Now().Add(cleanDuration) // Set desired cleanDeadline
+	}
 
-			fmt.Printf("**PH DV %s => %v\n", key, rs.pruneHeights)
-			if err := store.(*iavl.Store).DeleteVersions(rs.pruneHeights...); err != nil {
-				if errCause := errors.Cause(err); errCause != nil && errCause != iavltree.ErrVersionDoesNotExist {
-					panic(err)
+	for {
+		for key, store := range rs.stores {
+			if store.GetStoreType() == types.StoreTypeIAVL {
+				// If the store is wrapped with an inter-block cache, we must first unwrap
+				// it to get the underlying IAVL store.
+				store = rs.GetCommitKVStore(key)
+
+				fmt.Printf("**PH DV %s => %v\n", key, rs.pruneHeights)
+
+				if err := store.(*iavl.Store).DeleteVersions(rs.pruneHeights...); err != nil {
+					if errCause := errors.Cause(err); errCause != nil && errCause != iavltree.ErrVersionDoesNotExist {
+						panic(err)
+					}
 				}
+
 			}
+		}
+
+		// CVCH: simulate slow prune
+		fmt.Printf("TEST: aritficial stall 1 seconds\n")
+		<-time.After(500 * time.Millisecond)
+
+		// CVCH: Add more blocks to clean until we run exceed cleanDeadline
+		if time.Now().Before(cleanDeadline) {
+			rs.pruneHeights = make([]int64, 0)      // clear pruneHeights
+			pruneAdded := rs.addCleanHouseHeights() // CVCH: Add additional block heights for clean house pruning
+			if pruneAdded == 0 {
+				fmt.Printf("**CVCH: Terminate Prune - No blocks added")
+				break // Nothing added, so work is done
+			}
+		} else {
+			fmt.Printf("**CVCH: Terminate Prune - Deadline Exceeded!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+			break
 		}
 	}
 
