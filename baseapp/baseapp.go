@@ -153,9 +153,10 @@ type baseappVersions struct {
 // which then has a sub-item, persistence fields
 type snapshotData struct {
 	// manages snapshots, i.e. dumps of app state at certain intervals
-	snapshotManager    *snapshots.Manager
-	snapshotInterval   uint64 // block interval between state sync snapshots
-	snapshotKeepRecent uint32 // recent state sync snapshots to keep
+	snapshotManager       *snapshots.Manager
+	snapshotInterval      uint64 // block interval between state sync snapshots
+	snapshotKeepRecent    uint32 // recent state sync snapshots to keep
+	snapshotRestoreHeight uint64 // local snapshot height to restore
 }
 
 // NewBaseApp returns a reference to an initialized BaseApp. It accepts a
