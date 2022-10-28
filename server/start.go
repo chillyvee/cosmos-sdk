@@ -225,9 +225,6 @@ func startStandAlone(ctx *Context, appCreator types.AppCreator) error {
 func lazyLoadLocalSnapshot(ctx *Context, app types.Application, ssRestoreHeight uint64) error {
 	ctx.Logger.Info("Local State Sync restore snapshot", "height", ssRestoreHeight)
 
-	// StateSync.RestoreHeight  triggers tendermint to restore store and block state
-	ctx.Config.StateSync.RestoreHeight = ssRestoreHeight
-
 	ctx.Logger.Info("Searching local snapshots")
 	resp := app.ListSnapshots(abci.RequestListSnapshots{})
 	if len(resp.Snapshots) < 1 {
