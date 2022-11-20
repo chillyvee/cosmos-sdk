@@ -739,8 +739,17 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 	// and the following messages contain a SnapshotNode (i.e. an ExportNode). Store changes
 	// are demarcated by new SnapshotStore items.
 	for _, store := range stores {
+		fmt.Printf("Snapshot.Export Store Key %s\n", store.name)
+
 		exporter, err := store.Export(int64(height))
+		if exporter == nil {
+			fmt.Printf("Snapshot.Export Store Key %s exporter nil\n", store.name)
+			// CV Skip stores that fail to get an exporter
+			//    For example, when iavl/immutable_tree.ndb (nodedb) is nil
+			continue
+		}
 		if err != nil {
+			fmt.Printf("Snapshot.Export Store Key %s Error %v\n", store.name, err)
 			return err
 		}
 		defer exporter.Close()
@@ -758,6 +767,7 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 		for {
 			node, err := exporter.Next()
 			if err == iavltree.ExportDone {
+				fmt.Printf("Snapshot.Export Store Key Done %s\n", store.name)
 				break
 			} else if err != nil {
 				return err

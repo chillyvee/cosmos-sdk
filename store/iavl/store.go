@@ -279,7 +279,13 @@ func (st *Store) Export(version int64) (*iavl.Exporter, error) {
 	if !ok || tree == nil {
 		return nil, fmt.Errorf("iavl export failed: unable to fetch tree for version %v", version)
 	}
-	return tree.Export(), nil
+	exporter := tree.Export()
+
+	// cosmos/iavl immutable_tree.go and export.go FAIL if tree.ndb is nil
+	if exporter == nil {
+		return nil, fmt.Errorf("iavl export failed: unable to create exporter")
+	}
+	return exporter, nil
 }
 
 // Import imports an IAVL tree at the given version, returning an iavl.Importer for importing.
