@@ -770,13 +770,13 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 
 		exporter, err := store.Export(int64(height))
 		if exporter == nil {
-			fmt.Printf("Snapshot.Export Store Key %s exporter nil\n", store.name)
+			fmt.Printf("Snapshot.Export Store Key %s - Error - exporter is nil\n", store.name)
 			// CV Skip stores that fail to get an exporter
 			//    For example, when iavl/immutable_tree.ndb (nodedb) is nil
 			continue
 		}
 		if err != nil {
-			fmt.Printf("Snapshot.Export Store Key %s Error %v\n", store.name, err)
+			fmt.Printf("Snapshot.Export Store Key %s - Error - %v\n", store.name, err)
 			return err
 		}
 
