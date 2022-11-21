@@ -227,6 +227,7 @@ func (rs *Store) loadVersion(ver int64, upgrades *types.StoreUpgrades) error {
 	}
 
 	for _, key := range storesKeys {
+		rs.logger.Debug("loadVersion", "key", key)
 		storeParams := rs.storesParams[key]
 		commitID := rs.getCommitID(infos, key.Name())
 
@@ -572,9 +573,11 @@ func (rs *Store) PruneStores(clearPruningManager bool, pruningHeights []int64) (
 		return nil
 	}
 
-	rs.logger.Debug("pruning heights", "heights", pruningHeights)
+	rs.logger.Debug("prune store", "heights", pruningHeights)
 
 	for key, store := range rs.stores {
+		rs.logger.Debug("prune store", "key", key)
+
 		// If the store is wrapped with an inter-block cache, we must first unwrap
 		// it to get the underlying IAVL store.
 		if store.GetStoreType() != types.StoreTypeIAVL {
@@ -739,17 +742,17 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 	// and the following messages contain a SnapshotNode (i.e. an ExportNode). Store changes
 	// are demarcated by new SnapshotStore items.
 	for _, store := range stores {
-		fmt.Printf("Snapshot.Export Store Key %s\n", store.name)
+		rs.logger.Debug("Snapshot Begin", "store", store.name)
 
 		exporter, err := store.Export(int64(height))
 		if exporter == nil {
-			fmt.Printf("Snapshot.Export Store Key %s exporter nil\n", store.name)
+			rs.logger.Error("Snapshot Failed - exporter nil", "store", store.name)
 			// CV Skip stores that fail to get an exporter
 			//    For example, when iavl/immutable_tree.ndb (nodedb) is nil
 			continue
 		}
 		if err != nil {
-			fmt.Printf("Snapshot.Export Store Key %s Error %v\n", store.name, err)
+			rs.logger.Error("Snapshot Failed", "store", store.name, "err", err)
 			return err
 		}
 		defer exporter.Close()
@@ -767,7 +770,7 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 		for {
 			node, err := exporter.Next()
 			if err == iavltree.ExportDone {
-				fmt.Printf("Snapshot.Export Store Key Done %s\n", store.name)
+				rs.logger.Debug("Snapshot Done", "store", store.name)
 				break
 			} else if err != nil {
 				return err
