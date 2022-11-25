@@ -1,6 +1,7 @@
 package rootmulti
 
 import (
+	"encoding/hex"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -190,6 +191,7 @@ func (rs *Store) LoadVersion(ver int64) error {
 func (rs *Store) loadVersion(ver int64, upgrades *types.StoreUpgrades) error {
 	infos := make(map[string]types.StoreInfo)
 
+		rs.logger.Debug("loadVersion", "ver", ver)
 	cInfo := &types.CommitInfo{}
 
 	// load old data if we are not version 0
@@ -203,6 +205,7 @@ func (rs *Store) loadVersion(ver int64, upgrades *types.StoreUpgrades) error {
 		// convert StoreInfos slice to map
 		for _, storeInfo := range cInfo.StoreInfos {
 			infos[storeInfo.Name] = storeInfo
+	rs.logger.Debug("loadVersion", "storeName", storeInfo.Name, "storeInfo", storeInfo)
 		}
 	}
 
@@ -211,6 +214,7 @@ func (rs *Store) loadVersion(ver int64, upgrades *types.StoreUpgrades) error {
 
 	storesKeys := make([]types.StoreKey, 0, len(rs.storesParams))
 
+	rs.logger.Debug("loadVersion", "storesParams", rs.storesParams)
 	for key := range rs.storesParams {
 		storesKeys = append(storesKeys, key)
 	}
@@ -224,9 +228,11 @@ func (rs *Store) loadVersion(ver int64, upgrades *types.StoreUpgrades) error {
 	}
 
 	for _, key := range storesKeys {
-		rs.logger.Debug("loadVersion", "key", key)
+		rs.logger.Debug("loadVersion", "key", key, "ver", ver)
 		storeParams := rs.storesParams[key]
+	rs.logger.Debug("loadVersion", "key", key, "storeParams", storeParams)
 		commitID := rs.getCommitID(infos, key.Name())
+	rs.logger.Debug("loadVersion", "key", key, "commitID.Version", commitID.Version, "commitId.Hash", hex.EncodeToString(commitID.Hash))
 
 		// If it has been added, set the initial version
 		if upgrades.IsAdded(key.Name()) {
@@ -234,6 +240,7 @@ func (rs *Store) loadVersion(ver int64, upgrades *types.StoreUpgrades) error {
 		}
 
 		store, err := rs.loadCommitStoreFromParams(key, commitID, storeParams)
+	rs.logger.Debug("loadVersion loadCommitStoreFromParams", "store", store)
 		if err != nil {
 			return errors.Wrap(err, "failed to load store")
 		}
@@ -410,6 +417,8 @@ func (rs *Store) Commit() types.CommitID {
 	}
 
 	rs.lastCommitInfo = commitStores(version, rs.stores)
+fmt.Printf("rootmulti Commit() lastCommitInfo: %+v\n", rs.lastCommitInfo)
+fmt.Printf("rootmulti Commit() lastCommitInfo.Hash: %v\n", rs.lastCommitInfo.Hash())
 
 	// Determine if pruneHeight height needs to be added to the list of heights to
 	// be pruned, where pruneHeight = (commitHeight - 1) - KeepRecent.
@@ -739,10 +748,11 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 			return err
 		}
 
+		nodeCount := 0
 		for {
 			node, err := exporter.Next()
 			if err == iavltree.ExportDone {
-				rs.logger.Debug("Snapshot Done", "store", store.name)
+				rs.logger.Debug("Snapshot Done", "store", store.name, "nodeCount", nodeCount)
 				break
 			} else if err != nil {
 				return err
@@ -757,9 +767,23 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 					},
 				},
 			})
+			if (store.name == "authz" || store.name == "feegrant") {
+				fmt.Printf("SnapshotIAVLItem %v\n", &snapshottypes.SnapshotItem{
+					Item: &snapshottypes.SnapshotItem_IAVL{
+						IAVL: &snapshottypes.SnapshotIAVLItem{
+							Key:     node.Key,
+							Value:   node.Value,
+							Height:  int32(node.Height),
+							Version: node.Version,
+						},
+					},
+				})
+			}
+
 			if err != nil {
 				return err
 			}
+		nodeCount++
 		}
 		exporter.Close()
 	}
@@ -869,8 +893,10 @@ func (rs *Store) loadCommitStoreFromParams(key types.StoreKey, id types.CommitID
 		var err error
 
 		if params.initialVersion == 0 {
+	rs.logger.Debug("loadCommitStoreFromParams LoadStore", "key", key)
 			store, err = iavl.LoadStore(db, rs.logger, key, id, rs.lazyLoading, rs.iavlCacheSize, rs.iavlDisableFastNode)
 		} else {
+	rs.logger.Debug("loadCommitStoreFromParams LoadStoreWithInitialVersion", "key", key, "version", params.initialVersion)
 			store, err = iavl.LoadStoreWithInitialVersion(db, rs.logger, key, id, rs.lazyLoading, params.initialVersion, rs.iavlCacheSize, rs.iavlDisableFastNode)
 		}
 
@@ -971,6 +997,7 @@ func GetLatestVersion(db dbm.DB) int64 {
 		panic(err)
 	}
 
+	fmt.Printf("GetLatestVersion latestVersion %d", latestVersion)
 	return latestVersion
 }
 
@@ -1018,6 +1045,7 @@ func (rs *Store) doProofsQuery(req abci.RequestQuery) abci.ResponseQuery {
 // Gets commitInfo from disk.
 func getCommitInfo(db dbm.DB, ver int64) (*types.CommitInfo, error) {
 	cInfoKey := fmt.Sprintf(commitInfoKeyFmt, ver)
+fmt.Printf("getCommitInfo key: %s\n", cInfoKey)
 
 	bz, err := db.Get([]byte(cInfoKey))
 	if err != nil {
@@ -1031,6 +1059,7 @@ func getCommitInfo(db dbm.DB, ver int64) (*types.CommitInfo, error) {
 		return nil, errors.Wrap(err, "failed unmarshal commit info")
 	}
 
+fmt.Printf("getCommitInfo cInfo: %+v\n", cInfo)
 	return cInfo, nil
 }
 

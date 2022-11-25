@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/hex"
 	fmt "fmt"
 
 	ics23 "github.com/confio/ics23/go"
@@ -25,6 +26,7 @@ func (ci CommitInfo) toMap() map[string][]byte {
 	m := make(map[string][]byte, len(ci.StoreInfos))
 	for _, storeInfo := range ci.StoreInfos {
 		m[storeInfo.Name] = storeInfo.GetHash()
+fmt.Printf("commit_info name: %s, hash: %v\n", storeInfo.Name, hex.EncodeToString(m[storeInfo.Name]))
 	}
 
 	return m
@@ -38,6 +40,7 @@ func (ci CommitInfo) Hash() []byte {
 	}
 
 	rootHash, _, _ := sdkmaps.ProofsFromMap(ci.toMap())
+fmt.Printf("commit_info Hash() hash: %v\n", hex.EncodeToString(rootHash))
 	return rootHash
 }
 
