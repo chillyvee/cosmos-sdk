@@ -1,6 +1,7 @@
 package rootmulti
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -206,6 +207,7 @@ func (rs *Store) LoadVersion(ver int64) error {
 func (rs *Store) loadVersion(ver int64, upgrades *types.StoreUpgrades) error {
 	infos := make(map[string]types.StoreInfo)
 
+	rs.logger.Debug("loadVersion", "ver", ver)
 	cInfo := &types.CommitInfo{}
 
 	// load old data if we are not version 0
@@ -240,9 +242,9 @@ func (rs *Store) loadVersion(ver int64, upgrades *types.StoreUpgrades) error {
 	}
 
 	for _, key := range storesKeys {
-		rs.logger.Debug("loadVersion", "key", key)
 		storeParams := rs.storesParams[key]
 		commitID := rs.getCommitID(infos, key.Name())
+		rs.logger.Debug("loadVersion", "key", key, "commitID.Version", commitID.Version, "commitId.Hash", hex.EncodeToString(commitID.Hash))
 
 		// If it has been added, set the initial version
 		if upgrades.IsAdded(key.Name()) {
@@ -764,14 +766,36 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 		return strings.Compare(stores[i].name, stores[j].name) == -1
 	})
 
+	// CV Load the commit to get actual version ids for each store
+	infos := make(map[string]types.StoreInfo)
+	cInfo := &types.CommitInfo{}
+
+	var err error
+	cInfo, err = getCommitInfo(rs.db, int64(height))
+	if err != nil {
+		return err
+	}
+
+	// convert StoreInfos slice to map
+	for _, storeInfo := range cInfo.StoreInfos {
+		infos[storeInfo.Name] = storeInfo
+	}
+
+	storesKeys := make([]types.StoreKey, 0, len(rs.storesParams))
+	for key := range rs.storesParams {
+		storesKeys = append(storesKeys, key)
+	}
 	// Export each IAVL store. Stores are serialized as a stream of SnapshotItem Protobuf
 	// messages. The first item contains a SnapshotStore with store metadata (i.e. name),
 	// and the following messages contain a SnapshotNode (i.e. an ExportNode). Store changes
 	// are demarcated by new SnapshotStore items.
 	for _, store := range stores {
-		rs.logger.Debug("Snapshot Begin", "store", store.name)
 
-		exporter, err := store.Export(int64(height))
+		commitID := rs.getCommitID(infos, store.name)
+		storeVersion := commitID.Version
+		rs.logger.Debug("Snapshot Begin", "store", store.name, "version", storeVersion, "hash", hex.EncodeToString(commitID.Hash))
+
+		exporter, err := store.Export(int64(storeVersion))
 		if exporter == nil {
 			rs.logger.Error("Snapshot Failed - exporter nil", "store", store.name)
 			// CV Skip stores that fail to get an exporter
@@ -783,6 +807,7 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 			return err
 		}
 
+		nodeCount := 0
 		err = func() error {
 			defer exporter.Close()
 
@@ -793,6 +818,7 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 					},
 				},
 			})
+
 			if err != nil {
 				return err
 			}
@@ -800,7 +826,8 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 			for {
 				node, err := exporter.Next()
 				if err == iavltree.ExportDone {
-					fmt.Printf("Snapshot.Export Store Key Done %s\n", store.name)
+					rs.logger.Debug("Snapshot Done", "store", store.name, "nodeCount", nodeCount)
+					nodeCount = 0
 					break
 				} else if err != nil {
 					return err
@@ -818,6 +845,7 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 				if err != nil {
 					return err
 				}
+				nodeCount++
 			}
 
 			return nil
