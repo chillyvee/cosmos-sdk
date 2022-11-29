@@ -755,6 +755,7 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 			Item: &snapshottypes.SnapshotItem_Store{
 				Store: &snapshottypes.SnapshotStoreItem{
 					Name: store.name,
+					Version: store.version,
 				},
 			},
 		})
@@ -827,12 +828,12 @@ loop:
 			if !ok || store == nil {
 				return snapshottypes.SnapshotItem{}, sdkerrors.Wrapf(sdkerrors.ErrLogic, "cannot import into non-IAVL store %q", item.Store.Name)
 			}
-			importer, err = store.Import(int64(height))
+			// Importer height must reflect the node height (which usually matches the block height, but not always)
+			importer, err = store.Import(int64(item.Store.Version))
 			if err != nil {
 				return snapshottypes.SnapshotItem{}, sdkerrors.Wrap(err, "import failed")
 			}
 			defer importer.Close()
-
 		case *snapshottypes.SnapshotItem_IAVL:
 			if importer == nil {
 				return snapshottypes.SnapshotItem{}, sdkerrors.Wrap(sdkerrors.ErrLogic, "received IAVL node item before store item")
