@@ -33,6 +33,8 @@ message SnapshotItem {
 // SnapshotStoreItem contains metadata about a snapshotted store.
 message SnapshotStoreItem {
   string name = 1;
+  // version is ideally block height, but not guaranteed
+  uint64 version = 2;
 }
 
 // SnapshotIAVLItem is an exported IAVL node.
