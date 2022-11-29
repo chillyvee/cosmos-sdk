@@ -755,7 +755,7 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 			Item: &snapshottypes.SnapshotItem_Store{
 				Store: &snapshottypes.SnapshotStoreItem{
 					Name: store.name,
-					Version: store.version,
+					Version: storeVersion,
 				},
 			},
 		})
