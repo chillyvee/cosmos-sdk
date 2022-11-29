@@ -814,7 +814,8 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 			err := protoWriter.WriteMsg(&snapshottypes.SnapshotItem{
 				Item: &snapshottypes.SnapshotItem_Store{
 					Store: &snapshottypes.SnapshotStoreItem{
-						Name: store.name,
+						Name:    store.name,
+						Version: uint64(storeVersion),
 					},
 				},
 			})
@@ -892,14 +893,21 @@ loop:
 			if !ok || store == nil {
 				return snapshottypes.SnapshotItem{}, sdkerrors.Wrapf(sdkerrors.ErrLogic, "cannot import into non-IAVL store %q", item.Store.Name)
 			}
-			importer, err = store.Import(int64(height))
+			// Importer height must reflect the node height (which usually matches the block height, but not always)
+			rs.logger.Debug("Restore", "store", item.Store.Name, "version", item.Store.Version)
+			if item.Store.Version == 0 {
+				fmt.Printf("!!!!!!!!!!!!!!!!!  Restore Error, Snapshot Missing Version, Use Another Peer !!!!!!!!!!!!!!!!")
+				rs.logger.Error("Restore Error, Snapshot Missing Version, Use Another Peer", "store", item.Store.Name, "version", item.Store.Version)
+				return snapshottypes.SnapshotItem{}, sdkerrors.Wrap(sdkerrors.ErrLogic, "Snapshot Without Store Version Not Supported, Use Another Peer")
+			}
+			importer, err = store.Import(int64(item.Store.Version))
 			if err != nil {
 				return snapshottypes.SnapshotItem{}, sdkerrors.Wrap(err, "import failed")
 			}
 			defer importer.Close()
-
 		case *snapshottypes.SnapshotItem_IAVL:
 			if importer == nil {
+				rs.logger.Error("Restore Error, Unexepected IAVL Node")
 				return snapshottypes.SnapshotItem{}, sdkerrors.Wrap(sdkerrors.ErrLogic, "received IAVL node item before store item")
 			}
 			if item.IAVL.Height > math.MaxInt8 {

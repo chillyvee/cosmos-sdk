@@ -293,6 +293,8 @@ func (*SnapshotItem) XXX_OneofWrappers() []interface{} {
 // Since: cosmos-sdk 0.46
 type SnapshotStoreItem struct {
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// version is ideally block height, but not guaranteed
+	Version uint64 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
 }
 
 func (m *SnapshotStoreItem) Reset()         { *m = SnapshotStoreItem{} }
@@ -333,6 +335,13 @@ func (m *SnapshotStoreItem) GetName() string {
 		return m.Name
 	}
 	return ""
+}
+
+func (m *SnapshotStoreItem) GetVersion() uint64 {
+	if m != nil {
+		return m.Version
+	}
+	return 0
 }
 
 // SnapshotIAVLItem is an exported IAVL node.
@@ -934,6 +943,11 @@ func (m *SnapshotStoreItem) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Version != 0 {
+		i = encodeVarintSnapshot(dAtA, i, uint64(m.Version))
+		i--
+		dAtA[i] = 0x10
+	}
 	if len(m.Name) > 0 {
 		i -= len(m.Name)
 		copy(dAtA[i:], m.Name)
@@ -1268,6 +1282,9 @@ func (m *SnapshotStoreItem) Size() (n int) {
 	l = len(m.Name)
 	if l > 0 {
 		n += 1 + l + sovSnapshot(uint64(l))
+	}
+	if m.Version != 0 {
+		n += 1 + sovSnapshot(uint64(m.Version))
 	}
 	return n
 }
@@ -1939,6 +1956,25 @@ func (m *SnapshotStoreItem) Unmarshal(dAtA []byte) error {
 			}
 			m.Name = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Version", wireType)
+			}
+			m.Version = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowSnapshot
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Version |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipSnapshot(dAtA[iNdEx:])
