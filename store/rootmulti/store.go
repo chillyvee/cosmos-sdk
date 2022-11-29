@@ -831,6 +831,7 @@ loop:
 			// Importer height must reflect the node height (which usually matches the block height, but not always)
 			rs.logger.Debug("Restore", "store", item.Store.Name, "version", item.Store.Version)
 			if item.Store.Version == 0 {
+				fmt.Printf("!!!!!!!!!!!!!!!!!  Restore Error, Snapshot Missing Version, Use Another Peer !!!!!!!!!!!!!!!!")
 				rs.logger.Error("Restore Error, Snapshot Missing Version, Use Another Peer", "store", item.Store.Name, "version", item.Store.Version)
 				return snapshottypes.SnapshotItem{}, sdkerrors.Wrap(sdkerrors.ErrLogic, "Snapshot Without Store Version Not Supported, Use Another Peer")
 			}
