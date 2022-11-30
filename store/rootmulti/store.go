@@ -452,6 +452,18 @@ func (rs *Store) PruneStores(clearStorePruningHeihgts bool, pruningHeights []int
 		return
 	}
 
+	// BUG: When applications do not correctly add a store with the current block height, it is
+	//      unsafe to assume that the same range of pruningHeights can be applied to all stores.
+	//
+	// Possible Resolutions:
+	//
+	//	A patch for iavl will prevent panic due to pruning invalid store versions.  
+	// 	This reduces disk space recovered until the store version can be matched.
+	//
+	//      The current pruningHeights can be used to fetch individual store heights for each 
+	//      commit height and prune specific versions.  However, pruning performance may be 
+	//	reduced since orphan scan will not be possible over a range unless intervals 
+	//	are first calculated for each store.
 	for key, store := range rs.stores {
 		if store.GetStoreType() == types.StoreTypeIAVL {
 			// If the store is wrapped with an inter-block cache, we must first unwrap
