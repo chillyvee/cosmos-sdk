@@ -766,7 +766,7 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 		return strings.Compare(stores[i].name, stores[j].name) == -1
 	})
 
-	// CV Load the commit to get actual version ids for each store
+	// load the commit to get actual version IDs for each store
 	infos := make(map[string]types.StoreInfo)
 	cInfo := &types.CommitInfo{}
 
@@ -776,7 +776,6 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 		return err
 	}
 
-	// convert StoreInfos slice to map
 	for _, storeInfo := range cInfo.StoreInfos {
 		infos[storeInfo.Name] = storeInfo
 	}
@@ -785,25 +784,24 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 	for key := range rs.storesParams {
 		storesKeys = append(storesKeys, key)
 	}
+
 	// Export each IAVL store. Stores are serialized as a stream of SnapshotItem Protobuf
 	// messages. The first item contains a SnapshotStore with store metadata (i.e. name),
 	// and the following messages contain a SnapshotNode (i.e. an ExportNode). Store changes
 	// are demarcated by new SnapshotStore items.
 	for _, store := range stores {
-
 		commitID := rs.getCommitID(infos, store.name)
 		storeVersion := commitID.Version
-		rs.logger.Debug("Snapshot Begin", "store", store.name, "version", storeVersion, "hash", hex.EncodeToString(commitID.Hash))
+		rs.logger.Debug("starting snapshot", "store", store.name, "version", storeVersion, "hash", hex.EncodeToString(commitID.Hash))
 
 		exporter, err := store.Export(int64(storeVersion))
 		if exporter == nil {
-			rs.logger.Error("Snapshot Failed - exporter nil", "store", store.name)
-			// CV Skip stores that fail to get an exporter
-			//    For example, when iavl/immutable_tree.ndb (nodedb) is nil
+			rs.logger.Error("snapshot failed; exporter is nil", "store", store.name)
+			// skip stores that fail to export, e.g. when IAVL (nodedb) is nil
 			continue
 		}
 		if err != nil {
-			rs.logger.Error("Snapshot Failed", "store", store.name, "err", err)
+			rs.logger.Error("snapshot failed", "store", store.name, "err", err)
 			return err
 		}
 
@@ -893,11 +891,11 @@ loop:
 			if !ok || store == nil {
 				return snapshottypes.SnapshotItem{}, sdkerrors.Wrapf(types.ErrLogic, "cannot import into non-IAVL store %q", item.Store.Name)
 			}
+
 			// Importer height must reflect the node height (which usually matches the block height, but not always)
-			rs.logger.Debug("Restore", "store", item.Store.Name, "version", item.Store.Version)
+			rs.logger.Debug("restoring snapshot", "store", item.Store.Name, "version", item.Store.Version)
 			if item.Store.Version == 0 {
-				fmt.Printf("!!!!!!!!!!!!!!!!!  Restore Error, Snapshot Missing Version, Use Another Peer !!!!!!!!!!!!!!!!")
-				rs.logger.Error("Restore Error, Snapshot Missing Version, Use Another Peer", "store", item.Store.Name, "version", item.Store.Version)
+				rs.logger.Error("failed to restore; snapshot missing version; use another peer", "store", item.Store.Name, "version", item.Store.Version)
 				return snapshottypes.SnapshotItem{}, sdkerrors.Wrap(sdkerrors.ErrLogic, "Snapshot Without Store Version Not Supported, Use Another Peer")
 			}
 			importer, err = store.Import(int64(item.Store.Version))
