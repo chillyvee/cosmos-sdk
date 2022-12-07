@@ -905,7 +905,7 @@ loop:
 			defer importer.Close()
 		case *snapshottypes.SnapshotItem_IAVL:
 			if importer == nil {
-				rs.logger.Error("Restore Error, Unexepected IAVL Node")
+				rs.logger.Error("failed to restore; unexpected IAVL node")
 				return snapshottypes.SnapshotItem{}, sdkerrors.Wrap(sdkerrors.ErrLogic, "received IAVL node item before store item")
 			}
 			if item.IAVL.Height > math.MaxInt8 {
