@@ -2,6 +2,7 @@ package rootmulti
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -190,6 +191,7 @@ func (rs *Store) LoadVersion(ver int64) error {
 func (rs *Store) loadVersion(ver int64, upgrades *types.StoreUpgrades) error {
 	infos := make(map[string]types.StoreInfo)
 
+	rs.logger.Debug("loadVersion", "ver", ver)
 	cInfo := &types.CommitInfo{}
 
 	// load old data if we are not version 0
@@ -226,6 +228,7 @@ func (rs *Store) loadVersion(ver int64, upgrades *types.StoreUpgrades) error {
 	for _, key := range storesKeys {
 		storeParams := rs.storesParams[key]
 		commitID := rs.getCommitID(infos, key.Name())
+		rs.logger.Debug("loadVersion commitID", "key", key, "ver", ver, "hash", hex.EncodeToString(commitID.Hash))
 
 		// If it has been added, set the initial version
 		if upgrades.IsAdded(key.Name()) {
@@ -443,7 +446,9 @@ func (rs *Store) PruneStores(clearStorePruningHeihgts bool, pruningHeights []int
 		return
 	}
 
+	rs.logger.Debug("pruning stores", "heights", pruningHeights)
 	for key, store := range rs.stores {
+		rs.logger.Debug("pruning store", "key", key) // Also log store.name (a private variable)?
 		if store.GetStoreType() == types.StoreTypeIAVL {
 			// If the store is wrapped with an inter-block cache, we must first unwrap
 			// it to get the underlying IAVL store.
@@ -714,10 +719,18 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 	// and the following messages contain a SnapshotNode (i.e. an ExportNode). Store changes
 	// are demarcated by new SnapshotStore items.
 	for _, store := range stores {
+		rs.logger.Debug("starting snapshot", "store", store.name, "height", height)
+
 		exporter, err := store.Export(int64(height))
-		if err != nil {
+		if exporter == nil {
+			rs.logger.Error("snapshot failed; exporter is nil", "store", store.name)
 			return err
 		}
+		if err != nil {
+			rs.logger.Error("snapshot failed; exporter error", "store", store.name, "err", err)
+			return err
+		}
+
 		defer exporter.Close()
 		err = protoWriter.WriteMsg(&snapshottypes.SnapshotItem{
 			Item: &snapshottypes.SnapshotItem_Store{
@@ -727,12 +740,16 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 			},
 		})
 		if err != nil {
+			rs.logger.Error("snapshot failed; Item Store Write Failure", "store", store.name, "err", err)
 			return err
 		}
 
+		nodeCount := 0
 		for {
 			node, err := exporter.Next()
 			if err == iavltree.ExportDone {
+				rs.logger.Debug("Snapshot Done", "store", store.name, "nodeCount", nodeCount)
+				nodeCount = 0
 				break
 			} else if err != nil {
 				return err
@@ -750,6 +767,7 @@ func (rs *Store) Snapshot(height uint64, protoWriter protoio.Writer) error {
 			if err != nil {
 				return err
 			}
+			nodeCount++
 		}
 		exporter.Close()
 	}
@@ -795,9 +813,12 @@ loop:
 				return snapshottypes.SnapshotItem{}, sdkerrors.Wrap(err, "import failed")
 			}
 			defer importer.Close()
+			// Importer height must reflect the node height (which usually matches the block height, but not always)
+			rs.logger.Debug("restoring snapshot", "store", item.Store.Name)
 
 		case *snapshottypes.SnapshotItem_IAVL:
 			if importer == nil {
+				rs.logger.Error("failed to restore; received IAVL node item before store item")
 				return snapshottypes.SnapshotItem{}, sdkerrors.Wrap(sdkerrors.ErrLogic, "received IAVL node item before store item")
 			}
 			if item.IAVL.Height > math.MaxInt8 {
